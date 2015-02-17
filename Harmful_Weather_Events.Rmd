@@ -1,0 +1,100 @@
+---
+title: "Most Harmful Weather Events in the United States"
+author: "Thomas Thevis"
+date: "02/16/2015"
+output: html_document
+---
+
+# Synopsis
+
+# Data Processing
+
+## Loading the Data Set
+
+If not already present in the working directory, the *Storm Data* is fetched from the web and read into a data frame `data`. 
+
+```{r, cache=TRUE}
+data.file <- "StormData.csv.bz2"
+if (!file.exists(data.file))
+download.file('https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2', 
+              destfile=data.file, method="curl")
+data <- read.csv(bzfile(data.file))
+str(data)
+```
+
+The data frame `data` is the basis for all subsequent processing steps. 
+
+## Processing Data for Population Health Consequences
+
+Population health consequences are represented by the variables `FATALITIES` and `INJURIES`, respectively. Therefore, we form a new data frame `pop.health` containing these two variables and the `EVTYPE` variable, only.
+
+```{r}
+pop.health <- subset(data, select=c("EVTYPE", "FATALITIES", "INJURIES"))
+
+library(lubridate)
+pop.health$YEAR <- year(mdy_hms(data$BGN_DATE))
+```
+
+*Harmfulness* to population health is not an exact criterion. In ther remainder of this section, we will compute the total and the average number of affected 
+cases of fatalities and injuries per event type (restricted to the respective top 10).
+
+### Total Number of Fatalities by Event Type
+
+```{r}
+total.fatalities <- sum(pop.health$FATALITIES)
+fat.sum <- sort(tapply(pop.health$FATALITIES, pop.health$EVTYPE, sum), dec=T)
+fat.sum[1:10]
+inj.sum <- sort(tapply(pop.health$INJURIES, pop.health$EVTYPE, sum), dec=T)
+inj.sum[1:10]
+```
+
+There is a huge spread in the amount of fatalities caused by the different event types, even in the top 10 list. The top cause `r names(fat.sum)[1]` alone causes 
+`r round(fat.sum[1]/total.fatalities,4) * 100`% of all fatalities in the whole data set.   
+
+Therefore, we take a look into the year-wise distribution of the fatality sum caused by the top 10 event types for the whole data set.
+
+```{r}
+top10 <- names(fat.sum)[1:10]
+
+fat.top10 <- subset(pop.health, EVTYPE %in% top10, select=-INJURIES)
+fat.by.year <- aggregate(FATALITIES ~ YEAR + EVTYPE, data=fat.top10, sum) 
+
+# renaming variable to have a prettier legend title in the plot 
+names(fat.by.year)[names(fat.by.year)=="EVTYPE"] <- "EVENTTYPE"
+
+library(ggplot2)
+ggplot(fat.by.year, aes(YEAR, FATALITIES)) + geom_line(aes(color=EVENTTYPE)) + 
+  ggtitle("Year-Wise Distribution of Top 10 Fatality Causes")
+```
+
+For most of the top 10 event types data is only available after about 1990. This seems to be the coause for the dominance of Tornado events for fatality causes. It seems that the recording for other event types are incomplete (floods and heat wave have also existed before 1990). Using the whole data set starting from 1954 to compare consequences of different weathter events is therefore pointless.
+Since record completeness looks more promising after 1990, all event comparisons will be based on this time frame as well.  
+
+```{r}
+pop.health <- subset(pop.health, YEAR >=  1990)
+
+fat.sum <- sort(tapply(pop.health$FATALITIES, pop.health$EVTYPE, sum), dec=T)
+inj.sum <- sort(tapply(pop.health$INJURIES, pop.health$EVTYPE, sum), dec=T)
+```
+
+The top 10 events of both arrays are now converted into a common data frame which can be
+visualized with a stacked bar plor.
+
+```{r}
+fat.df <- data.frame(names(fat.sum)[1:10], rep("FATALITIES",10), fat.sum[1:10], stringsAsFactors = T)
+names(fat.df) <- c("EVENT", "TYPE", "AMOUNT")
+inj.df <- data.frame(names(inj.sum)[1:10], rep("INJURIES",10), inj.sum[1:10], stringsAsFactors = T) 
+names(inj.df) <- c("EVENT", "TYPE", "AMOUNT")
+
+DF <- rbind(fat.df, inj.df)
+
+ggplot(DF,aes(x=EVENT,y=AMOUNT,fill=TYPE), color=TYPE) +  
+  stat_summary(fun.y=sum,position="stack",geom="bar") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ggtitle("Fatalites and Injuries Due to Weather Events in the US since 1990")
+```
+
+Note that the fatalty count for EXCESSIVE HEAT is slightly greater than the fatality count for TORNADO. 
+
+
+# Results
