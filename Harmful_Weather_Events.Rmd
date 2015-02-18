@@ -1,13 +1,25 @@
 ---
-title: "Most Harmful Weather Events in the United States"
+title: "Most Harmful Types of Weather Events in the United States in Terms of Fatalties, Injuries, and Damage Costs"
 author: "Thomas Thevis"
 date: "02/16/2015"
 output: html_document
 ---
 
 # Synopsis
+This report focusses on the questions which type of weather events are most harmful to the population health and which events have the most economical impact in terms of damage costs for the United States.
+The report relies on the *Storm Data* publication of the National Oceanic
+and Atmospheric Administration (NOAA). It shows that the data recording for different weather event types differs in terms of chronological completeness and focusses on data from and after 1990. This report shows that Tornado and (Extreme) Heat events have the most impact on population health whereas Flood and Hurricane events have the most economical impact.   
 
 # Data Processing
+
+This section describes the process of obtaining and exploring NOAA' *Storm Data* and lists all code snippets (in the R programming language) used to process the data. 
+
+## Set Up Environment
+
+```{r}
+library(lubridate)
+library(ggplot2)
+```
 
 ## Loading the Data Set
 
@@ -30,15 +42,13 @@ Population health consequences are represented by the variables `FATALITIES` and
 
 ```{r}
 pop.health <- subset(data, select=c("EVTYPE", "FATALITIES", "INJURIES"))
-
-library(lubridate)
 pop.health$YEAR <- year(mdy_hms(data$BGN_DATE))
 ```
 
 *Harmfulness* to population health is not an exact criterion. In ther remainder of this section, we will compute the total and the average number of affected 
 cases of fatalities and injuries per event type (restricted to the respective top 10).
 
-### Total Number of Fatalities by Event Type
+### Total Number of Fatalities and Injuries by Event Type
 
 ```{r}
 total.fatalities <- sum(pop.health$FATALITIES)
@@ -48,27 +58,25 @@ inj.sum <- sort(tapply(pop.health$INJURIES, pop.health$EVTYPE, sum), dec=T)
 inj.sum[1:10]
 ```
 
-There is a huge spread in the amount of fatalities caused by the different event types, even in the top 10 list. The top cause `r names(fat.sum)[1]` alone causes 
+There is a huge spread in the amount of fatalities and injuries caused by the different event types, even in the top 10 lists. The top fatality cause `r names(fat.sum)[1]` alone represents 
 `r round(fat.sum[1]/total.fatalities,4) * 100`% of all fatalities in the whole data set.   
 
 Therefore, we take a look into the year-wise distribution of the fatality sum caused by the top 10 event types for the whole data set.
 
-```{r}
+```{r, cache=T}
 top10 <- names(fat.sum)[1:10]
-
 fat.top10 <- subset(pop.health, EVTYPE %in% top10, select=-INJURIES)
 fat.by.year <- aggregate(FATALITIES ~ YEAR + EVTYPE, data=fat.top10, sum) 
 
 # renaming variable to have a prettier legend title in the plot 
 names(fat.by.year)[names(fat.by.year)=="EVTYPE"] <- "EVENTTYPE"
 
-library(ggplot2)
 ggplot(fat.by.year, aes(YEAR, FATALITIES)) + geom_line(aes(color=EVENTTYPE)) + 
   ggtitle("Year-Wise Distribution of Top 10 Fatality Causes")
 ```
 
-For most of the top 10 event types data is only available after about 1990. This seems to be the coause for the dominance of Tornado events for fatality causes. It seems that the recording for other event types are incomplete (floods and heat wave have also existed before 1990). Using the whole data set starting from 1954 to compare consequences of different weathter events is therefore pointless.
-Since record completeness looks more promising after 1990, all event comparisons will be based on this time frame as well.  
+For most of the top 10 event types data is only available after about 1990. This seems to be the cause for the dominance of Tornado events for fatality causes. It seems that the recording for other event types are incomplete (floods and heat wave have also existed before 1990). Using the whole data set starting from 1954 to compare consequences of different weather events would heavily overestimate the impact of *Tornados*, for example.
+Since record completeness looks more promising after 1990, all event comparisons will be based on weather events which took place in or after 1990.  
 
 ```{r}
 pop.health <- subset(pop.health, YEAR >=  1990)
@@ -77,8 +85,8 @@ fat.sum <- sort(tapply(pop.health$FATALITIES, pop.health$EVTYPE, sum), dec=T)
 inj.sum <- sort(tapply(pop.health$INJURIES, pop.health$EVTYPE, sum), dec=T)
 ```
 
-The top 10 events of both arrays are now converted into a common data frame which can be
-visualized with a stacked bar plor.
+The top 10 events of both arrays are now converted into a common data frame which is
+visualized as a stacked bar plor.
 
 ```{r}
 fat.df <- data.frame(names(fat.sum)[1:10], rep("FATALITIES",10), fat.sum[1:10], stringsAsFactors = T)
@@ -94,7 +102,75 @@ ggplot(DF,aes(x=EVENT,y=AMOUNT,fill=TYPE), color=TYPE) +
   ggtitle("Fatalites and Injuries Due to Weather Events in the US since 1990")
 ```
 
-Note that the fatalty count for EXCESSIVE HEAT is slightly greater than the fatality count for TORNADO. 
+Note that the fatalty count for EXCESSIVE HEAT is slightly greater than the fatality count for TORNADO. This might be of interest in the assessment of the severity of the different weather event types.
 
+## Processing Data for Economic Consequences
+
+Economic impacts are represented by the variables (PROPDMG & PROPDMGEXP) and (CROPDMG & CROPDMGEXP), respectively. With the same argument as above and to rely on the same data foundation as before, the data set is filtered for weather events taking place in or after 1990.
+
+```{r, cache=TRUE}
+eco.conseq <- subset(data, select=c(
+  "EVTYPE", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP"))
+eco.conseq$YEAR <- year(mdy_hms(data$BGN_DATE))
+eco.conseq <- subset(eco.conseq, YEAR >=  1990)
+```
+
+An exploration of the exponent factors for both damage types shows a variety of different kinds of factor levels:
+
+```{r}
+unique(eco.conseq$PROPDMGEXP)
+unique(eco.conseq$CROPDMGEXP)
+```
+
+The following function will be used to compute abolute damage costs out of the split cost definitions:
+
+
+```{r}
+calculateCosts <- function(val, exp) {
+  if (exp %in% c('-', '+', '?', '')) return (0) 
+  if (exp %in% c('H', 'h')) exp <- 2 # hundred
+  if (exp %in% c('K', 'k')) exp <- 3 # kilo
+  if (exp %in% c('M', 'm')) exp <- 6 # million
+  if (exp %in% c('B', 'b')) exp <- 9 # billion
+  
+  if (is.factor(exp)) exp <- as.numeric(as.character(exp))
+  val * 10^ exp
+}
+```
+
+Now, we can compute the absolute damage costs per event and add them to the `eco.conseq` data frame.
+
+
+```{r, cache=TRUE}
+eco.conseq$PROPDMGABS <- mapply(calculateCosts, eco.conseq$PROPDMG, eco.conseq$PROPDMGEXP)
+eco.conseq$CROPDMGABS <- mapply(calculateCosts, eco.conseq$CROPDMG, eco.conseq$CROPDMGEXP)
+```
+
+The top ten weather event types for both kind of damage cost factors are combined to a new data frame and plotted as a facetted bar plot.
+
+```{r}
+prop.dmg <- sort(tapply(eco.conseq$PROPDMGABS, eco.conseq$EVTYPE, sum), dec=T)
+crop.dmg <- sort(tapply(eco.conseq$CROPDMGABS, eco.conseq$EVTYPE, sum), dec=T)
+prop.df <- data.frame(names(prop.dmg)[1:10], rep("Property",10), prop.dmg[1:10], stringsAsFactors = T)
+names(prop.df) <- c("EVENT", "TYPE", "AMOUNT")
+crop.df <- data.frame(names(crop.dmg)[1:10], rep("Crop",10), crop.dmg[1:10], stringsAsFactors = T) 
+names(crop.df) <- c("EVENT", "TYPE", "AMOUNT")
+
+DMG <- rbind(prop.df, crop.df)
+DMG$AMOUNT <- DMG$AMOUNT / 10^6 # convert into Mio US$
+
+qplot(x=EVENT, y=AMOUNT, fill=TYPE, data=DMG, 
+      geom="bar", stat="identity", position="dodge") +
+  facet_grid(.~ TYPE) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ggtitle("Costs of Weather Event Related Damages in the US Since 1990") +
+  ylab("Costs in Mio. USD") +
+  xlab("Weather Event") + 
+  theme(legend.position="none")
+```
 
 # Results
+
+If fatality and injury figures are combined the *Tornado* event is by far the most harmful one due to a huge amount of injuries. If one is only interested in fatality consequences, *Excessive Heat* (especially if combined with *Heat*) would be more severe to the population health - at least for events since 1990. 
+
+Economically, the data shows that damage to property has the biggest cost impact. Compared to these margins crop damage figures can be neglected. *Floods* are the most expensive weather events followed by *Hurricanes*. Again, these results are based on events from 1990 and later.  
